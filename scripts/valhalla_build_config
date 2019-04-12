@@ -18,6 +18,9 @@ config = {
     'hierarchy': True,
     'shortcuts': True,
     'include_driveways': True,
+    'include_bicycle': True,
+    'include_pedestrian': True,
+    'include_driving': True,
     'logging': {
       'type': 'std_out',
       'color': True,
@@ -143,6 +146,12 @@ config = {
       'max_matrix_distance': 400000.0,
       'max_matrix_locations': 50
     },
+    'taxi': {
+      'max_distance': 5000000.0,
+      'max_locations': 20,
+      'max_matrix_distance': 400000.0,
+      'max_matrix_locations': 50
+    },
     'pedestrian': {
       'max_distance': 250000.0,
       'max_locations': 50,
@@ -224,7 +233,10 @@ help_text = {
     'transit_bounding_box': 'Add comma separated bounding box values to only download transit data inside the given bounding box',
     'hierarchy': 'bool indicating whether road hierarchy is to be built - default to True',
     'shortcuts': 'bool indicating whether shortcuts are to be built - default to True',
-    'include_driveways': 'bool indicating whether driveways are included - default to True',
+    'include_driveways': 'bool indicating whether private driveways are included - default to True',
+    'include_bicycle': 'bool indicating whether cycling only ways are included - default to True',
+    'include_pedestrian': 'bool indicating whether pedestrian only ways are included - default to True',
+    'include_driving': 'bool indicating whether driving only ways are included - default to True',
     'logging': {
       'type': 'Type of logger either std_out or file',
       'color': 'User colored log level in std_out logger',
@@ -345,6 +357,12 @@ help_text = {
       'max_matrix_locations': 'Maximum number of input locations for a matrix'
     },
     'hov': {
+      'max_distance': 'Maximum b-line distance between all locations in meters',
+      'max_locations': 'Maximum number of input locations',
+      'max_matrix_distance': 'Maximum b-line distance between 2 most distant locations in meters for a matrix',
+      'max_matrix_locations': 'Maximum number of input locations for a matrix'
+    },
+    'taxi': {
       'max_distance': 'Maximum b-line distance between all locations in meters',
       'max_locations': 'Maximum number of input locations',
       'max_matrix_distance': 'Maximum b-line distance between 2 most distant locations in meters for a matrix',

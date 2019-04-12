@@ -88,14 +88,14 @@ const std::unordered_map<unsigned, unsigned> ERROR_TO_STATUS{
 
     {120, 400}, {121, 400}, {122, 400}, {123, 400}, {124, 400}, {125, 400}, {126, 400},
 
-    {130, 400}, {131, 400}, {132, 400}, {133, 400},
+    {130, 400}, {131, 400}, {132, 400}, {133, 400}, {136, 400},
 
     {140, 400}, {141, 501}, {142, 501},
 
     {150, 400}, {151, 400}, {152, 400}, {153, 400}, {154, 400}, {155, 400}, {156, 400},
-    {157, 400}, {158, 400},
+    {157, 400}, {158, 400}, {159, 400},
 
-    {160, 400}, {161, 400}, {162, 400}, {163, 400},
+    {160, 400}, {161, 400}, {162, 400}, {163, 400}, {164, 400},
 
     {170, 400}, {171, 400}, {172, 400},
 
@@ -160,6 +160,12 @@ const std::unordered_map<unsigned, std::string> OSRM_ERRORS_CODES{
      R"({"code":"InvalidValue","message":"The successfully parsed query parameters are invalid."})"},
     {133,
      R"({"code":"InvalidValue","message":"The successfully parsed query parameters are invalid."})"},
+    {134,
+     R"({"code":"InvalidValue","message":"The successfully parsed query parameters are invalid."})"},
+    {135,
+     R"({"code":"InvalidValue","message":"The successfully parsed query parameters are invalid."})"},
+    {136,
+     R"({"code":"InvalidValue","message":"The successfully parsed query parameters are invalid."})"},
 
     {140,
      R"({"code":"InvalidValue","message":"The successfully parsed query parameters are invalid."})"},
@@ -183,12 +189,16 @@ const std::unordered_map<unsigned, std::string> OSRM_ERRORS_CODES{
      R"({"code":"InvalidValue","message":"The successfully parsed query parameters are invalid."})"},
     {158,
      R"({"code":"InvalidValue","message":"The successfully parsed query parameters are invalid."})"},
+    {159,
+     R"({"code":"InvalidValue","message":"The successfully parsed query parameters are invalid."})"},
 
     {160, R"({"code":"InvalidOptions","message":"Options are invalid."})"},
     {161, R"({"code":"InvalidOptions","message":"Options are invalid."})"},
     {162,
      R"({"code":"InvalidValue","message":"The successfully parsed query parameters are invalid."})"},
     {163,
+     R"({"code":"InvalidValue","message":"The successfully parsed query parameters are invalid."})"},
+    {164,
      R"({"code":"InvalidValue","message":"The successfully parsed query parameters are invalid."})"},
 
     {170,
@@ -471,9 +481,16 @@ void from_json(rapidjson::Document& doc, odin::DirectionsOptions& options) {
     options.set_language(*language);
   }
 
+  // deprecated
   auto narrative = rapidjson::get_optional<bool>(doc, "/narrative");
-  if (narrative) {
-    options.set_narrative(*narrative);
+  if (narrative && !*narrative) {
+    options.set_directions_type(odin::DirectionsType::none);
+  }
+
+  auto dir_type = rapidjson::get_optional<std::string>(doc, "/directions_type");
+  odin::DirectionsType directions_type;
+  if (dir_type && odin::DirectionsType_Parse(*dir_type, &directions_type)) {
+    options.set_directions_type(directions_type);
   }
 
   auto encoded_polyline = rapidjson::get_optional<std::string>(doc, "/encoded_polyline");
@@ -491,6 +508,67 @@ void from_json(rapidjson::Document& doc, odin::DirectionsOptions& options) {
     // if no shape then try 'trace'
     if (options.shape().empty()) {
       parse_locations(doc, options.mutable_trace(), "trace", 135, false);
+    }
+  }
+
+  // Begin time for timestamps when entered given durations/delta times (defaults to 0)
+  auto t = rapidjson::get_optional<unsigned int>(doc, "/begin_time");
+  double begin_time = (t) ? begin_time = *t : 0.0;
+
+  // Use durations (per shape point pair) to set time
+  auto durations = rapidjson::get_optional<rapidjson::Value::ConstArray>(doc, "/durations");
+  if (durations) {
+    // Make sure durations is sized appropriately
+    if (durations->Size() != options.shape_size() - 1) {
+      throw valhalla_exception_t{136};
+    }
+
+    // Set time to begin_time at the first trace point.
+    options.mutable_shape()->Mutable(0)->set_time(begin_time);
+
+    // Iterate through the durations and add to elapsed time - set time on
+    // successive trace points.
+    double current_time = begin_time;
+    int index = 1;
+    for (const auto& dur : *durations) {
+      auto duration = dur.GetDouble();
+      current_time += duration;
+      options.mutable_shape()->Mutable(index)->set_time(current_time);
+      ++index;
+    }
+  }
+
+  // Option to use timestamps when computing elapsed time for matched routes
+  options.set_use_timestamps(
+      rapidjson::get_optional<bool>(doc, "/use_timestamps").get_value_or(false));
+
+  // Throw an error if use_timestamps is set to true but there are no timestamps in the
+  // trace (or no durations present)
+  if (options.use_timestamps()) {
+    bool has_time = false;
+    for (const auto& s : options.shape()) {
+      if (s.has_time()) {
+        has_time = true;
+        break;
+      }
+    }
+    if (!has_time) {
+      throw valhalla_exception_t{159};
+    }
+  }
+
+  // Set the output precision for shape/geometry (polyline encoding). Defaults to polyline6
+  // TODO - is this just for OSRM compatibility?
+  options.set_shape_format(odin::polyline6);
+  auto shape_format = rapidjson::get_optional<std::string>(doc, "/shape_format");
+  if (shape_format) {
+    if (*shape_format == "polyline6") {
+      options.set_shape_format(odin::polyline6);
+    } else if (*shape_format == "polyline5") {
+      options.set_shape_format(odin::polyline5);
+    } else {
+      // Throw an error if shape format is invalid
+      throw valhalla_exception_t{164};
     }
   }
 
@@ -517,7 +595,7 @@ void from_json(rapidjson::Document& doc, odin::DirectionsOptions& options) {
   // the order of costing must reflect the enum order
   for (const auto costing : {odin::auto_, odin::auto_shorter, odin::bicycle, odin::bus, odin::hov,
                              odin::motor_scooter, odin::multimodal, odin::pedestrian, odin::transit,
-                             odin::truck, odin::motorcycle, odin::auto_data_fix}) {
+                             odin::truck, odin::motorcycle, odin::auto_data_fix, odin::taxi}) {
     // Create the costing string
     auto costing_str = valhalla::odin::Costing_Name(costing);
     // Create the costing options key
@@ -542,6 +620,10 @@ void from_json(rapidjson::Document& doc, odin::DirectionsOptions& options) {
       }
       case odin::hov: {
         sif::ParseHOVCostOptions(doc, costing_options_key, options.add_costing_options());
+        break;
+      }
+      case odin::taxi: {
+        sif::ParseTaxiCostOptions(doc, costing_options_key, options.add_costing_options());
         break;
       }
       case odin::motor_scooter: {
@@ -590,7 +672,8 @@ void from_json(rapidjson::Document& doc, odin::DirectionsOptions& options) {
   // time type
   auto date_time_type = rapidjson::get_optional<float>(doc, "/date_time/type");
   if (date_time_type && odin::DirectionsOptions::DateTimeType_IsValid(*date_time_type)) {
-    options.set_date_time_type(static_cast<odin::DirectionsOptions::DateTimeType>(*date_time_type));
+    auto const v = static_cast<int>(*date_time_type);
+    options.set_date_time_type(static_cast<odin::DirectionsOptions::DateTimeType>(v));
   } // not specified but you want transit, then we default to current
   else if (options.has_costing() &&
            (options.costing() == odin::multimodal || options.costing() == odin::transit)) {
@@ -786,6 +869,7 @@ bool Costing_Parse(const std::string& costing, odin::Costing* c) {
       {"bicycle", odin::Costing::bicycle},
       {"bus", odin::Costing::bus},
       {"hov", odin::Costing::hov},
+      {"taxi", odin::Costing::taxi},
       {"motor_scooter", odin::Costing::motor_scooter},
       {"multimodal", odin::Costing::multimodal},
       {"pedestrian", odin::Costing::pedestrian},
@@ -809,6 +893,7 @@ const std::string& Costing_Name(const odin::Costing costing) {
       {odin::Costing::bicycle, "bicycle"},
       {odin::Costing::bus, "bus"},
       {odin::Costing::hov, "hov"},
+      {odin::Costing::taxi, "taxi"},
       {odin::Costing::motor_scooter, "motor_scooter"},
       {odin::Costing::multimodal, "multimodal"},
       {odin::Costing::pedestrian, "pedestrian"},
@@ -899,6 +984,19 @@ const std::string& FilterAction_Name(const odin::FilterAction action) {
   };
   auto i = actions.find(action);
   return i == actions.cend() ? empty : i->second;
+}
+
+bool DirectionsType_Parse(const std::string& dtype, odin::DirectionsType* t) {
+  static const std::unordered_map<std::string, odin::DirectionsType> types{
+      {"none", odin::DirectionsType::none},
+      {"maneuvers", odin::DirectionsType::maneuvers},
+      {"instructions", odin::DirectionsType::instructions},
+  };
+  auto i = types.find(dtype);
+  if (i == types.cend())
+    return false;
+  *t = i->second;
+  return true;
 }
 } // namespace odin
 

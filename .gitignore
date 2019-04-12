@@ -55,9 +55,13 @@ scripts/gdal-2.0.0.tar.gz
 /.vs*/
 /*build*/
 /CMakeSettings.json
+/.idea
 
 # nodejs
 node_modules
 lib/binding/node_valhalla.node
+
+# documentation
+site/
 
 .DS_Store
