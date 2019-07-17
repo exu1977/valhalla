@@ -363,9 +363,10 @@ void start_service() {
         "trace": { "max_best_paths": 4, "max_best_paths_shape": 100, "max_distance": 200000.0, "max_gps_accuracy": 100.0, "max_search_radius": 100, "max_shape": 16000 },
         "max_avoid_locations": 0,
         "max_reachability": 100,
-        "max_radius": 200
+        "max_radius": 200,
+        "max_alternates":2
       },
-      "costing_options": { "auto": {}, "pedestrian": {} }
+      "costing_directions_options": { "auto": {}, "pedestrian": {} }
     })";
   rapidjson::read_json(json, config);
 

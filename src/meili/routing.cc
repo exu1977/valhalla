@@ -162,7 +162,8 @@ inline bool IsEdgeAllowed(const baldr::DirectedEdge* edge,
                           const sif::cost_ptr_t& costing,
                           const Label& pred_edgelabel,
                           const baldr::GraphTile* tile) {
-  return !pred_edgelabel.edgeid().Is_Valid() || edgeid == pred_edgelabel.edgeid() ||
+  return (!pred_edgelabel.edgeid().Is_Valid() && costing->GetEdgeFilter()(edge) != 0.f) ||
+         edgeid == pred_edgelabel.edgeid() ||
          costing->Allowed(edge, pred_edgelabel, tile, edgeid, 0, 0);
 }
 
@@ -364,7 +365,8 @@ find_shortest_path(baldr::GraphReader& reader,
 
   // Lambda for heuristic
   float search_rad2 = search_radius * search_radius;
-  const auto heuristic = [&approximator, &search_radius, &search_rad2](const PointLL& lnglat) {
+  const auto heuristic = [&approximator, &search_radius,
+                          &search_rad2](const midgard::PointLL& lnglat) {
     float d2 = approximator.DistanceSquared(lnglat);
     return (d2 < search_rad2) ? 0.0f : sqrtf(d2) - search_radius;
   };
@@ -577,10 +579,10 @@ find_shortest_path(baldr::GraphReader& reader,
           if (cost.cost < max_dist && (max_time < 0 || cost.secs < max_time)) {
             // Get the end node tile and node lat,lon to compute heuristic
             const baldr::GraphTile* endtile = reader.GetGraphTile(directededge->endnode());
-            if (tile == nullptr) {
+            if (endtile == nullptr) {
               continue;
             }
-            float sortcost = cost.cost + heuristic(tile->get_node_ll(directededge->endnode()));
+            float sortcost = cost.cost + heuristic(endtile->get_node_ll(directededge->endnode()));
             labelset->put(directededge->endnode(), origin_edge.id, origin_edge.percent_along, 1.f,
                           cost, turn_cost, sortcost, label_idx, directededge, travelmode);
           }

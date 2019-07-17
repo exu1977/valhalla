@@ -14,13 +14,14 @@
 #include "thor/worker.h"
 #include <boost/property_tree/ptree.hpp>
 
+using namespace valhalla;
 using namespace valhalla::thor;
+using namespace valhalla::odin;
 using namespace valhalla::sif;
 using namespace valhalla::loki;
 using namespace valhalla::baldr;
 using namespace valhalla::midgard;
 using namespace valhalla::tyr;
-using namespace valhalla::odin;
 
 namespace {
 
@@ -48,7 +49,7 @@ boost::property_tree::ptree get_conf() {
         "bus": {"max_distance": 5000000.0,"max_locations": 50,"max_matrix_distance": 400000.0,"max_matrix_locations": 50},
         "hov": {"max_distance": 5000000.0,"max_locations": 20,"max_matrix_distance": 400000.0,"max_matrix_locations": 50},
         "isochrone": {"max_contours": 4,"max_distance": 25000.0,"max_locations": 1,"max_time": 120},
-        "max_avoid_locations": 50,"max_radius": 200,"max_reachability": 100,
+        "max_avoid_locations": 50,"max_radius": 200,"max_reachability": 100,"max_alternates":2,
         "multimodal": {"max_distance": 500000.0,"max_locations": 50,"max_matrix_distance": 0.0,"max_matrix_locations": 0},
         "pedestrian": {"max_distance": 250000.0,"max_locations": 50,"max_matrix_distance": 200000.0,"max_matrix_locations": 50,"max_transit_walking_distance": 10000,"min_transit_walking_distance": 1},
         "skadi": {"max_shape": 750000,"min_resample": 10.0},
@@ -67,14 +68,14 @@ struct route_tester {
       : conf(get_conf()), reader(new GraphReader(conf.get_child("mjolnir"))),
         loki_worker(conf, reader), thor_worker(conf, reader), odin_worker(conf) {
   }
-  std::pair<std::list<TripPath>, std::list<TripDirections>> test(const std::string& request_json) {
-    valhalla::valhalla_request_t request;
-    request.parse(request_json, valhalla::odin::DirectionsOptions::route);
+  Api test(const std::string& request_json) {
+    Api request;
+    ParseApi(request_json, Options::route, request);
     loki_worker.route(request);
-    std::pair<std::list<TripPath>, std::list<TripDirections>> results;
-    results.first = thor_worker.route(request);
-    results.second = odin_worker.narrate(request, results.first);
-    return results;
+    std::pair<std::list<TripLeg>, std::list<DirectionsLeg>> results;
+    thor_worker.route(request);
+    odin_worker.narrate(request);
+    return request;
   }
   boost::property_tree::ptree conf;
   std::shared_ptr<GraphReader> reader;
@@ -88,14 +89,14 @@ float mid_through_distance;
 
 void test_mid_break(const std::string& date_time) {
   route_tester tester;
-  std::list<TripPath> legs;
-  std::list<TripDirections> directions;
   std::string request =
       R"({"locations":[{"lat":52.09015,"lon":5.06362},{"lat":52.09041,"lon":5.06337,"type":"break"},{"lat":52.09015,"lon":5.06362}],"costing":"auto"})";
 
   request.pop_back();
   request += date_time;
-  std::tie(legs, directions) = tester.test(request);
+  auto response = tester.test(request);
+  const auto& legs = response.trip().routes(0).legs();
+  const auto& directions = response.directions().routes(0).legs();
 
   if (legs.size() != 2 || directions.size() != 2)
     throw std::logic_error("Should have two legs with two sets of directions");
@@ -109,8 +110,8 @@ void test_mid_break(const std::string& date_time) {
       if (!name.empty())
         name.pop_back();
       names.push_back(name);
-      if (m.type() == TripDirections_Maneuver_Type_kUturnRight ||
-          m.type() == TripDirections_Maneuver_Type_kUturnLeft)
+      if (m.type() == DirectionsLeg_Maneuver_Type_kUturnRight ||
+          m.type() == DirectionsLeg_Maneuver_Type_kUturnLeft)
         throw std::logic_error("Should not encounter any u-turns");
     }
   }
@@ -120,19 +121,20 @@ void test_mid_break(const std::string& date_time) {
     throw std::logic_error(
         "Should be a destination at the midpoint and reverse the route for the second leg");
 
-  mid_break_distance = directions.front().summary().length() + directions.back().summary().length();
+  mid_break_distance =
+      directions.begin()->summary().length() + directions.rbegin()->summary().length();
 }
 
 void test_mid_through(const std::string& date_time) {
   route_tester tester;
-  std::list<TripPath> legs;
-  std::list<TripDirections> directions;
   std::string request =
       R"({"locations":[{"lat":52.09015,"lon":5.06362},{"lat":52.09041,"lon":5.06337,"type":"through"},{"lat":52.09015,"lon":5.06362, "heading": 0}],"costing":"auto"})";
 
   request.pop_back();
   request += date_time;
-  std::tie(legs, directions) = tester.test(request);
+  auto response = tester.test(request);
+  const auto& legs = response.trip().routes(0).legs();
+  const auto& directions = response.directions().routes(0).legs();
 
   if (legs.size() != 1 || directions.size() != 1)
     throw std::logic_error("Should have 1 leg with 1 set of directions");
@@ -146,8 +148,8 @@ void test_mid_through(const std::string& date_time) {
       if (!name.empty())
         name.pop_back();
       names.push_back(name);
-      if (m.type() == TripDirections_Maneuver_Type_kUturnRight ||
-          m.type() == TripDirections_Maneuver_Type_kUturnLeft)
+      if (m.type() == DirectionsLeg_Maneuver_Type_kUturnRight ||
+          m.type() == DirectionsLeg_Maneuver_Type_kUturnLeft)
         throw std::logic_error("Should not encounter any u-turns");
     }
   }
@@ -156,19 +158,19 @@ void test_mid_through(const std::string& date_time) {
                                         "Selderiestraat", "Korianderstraat", ""})
     throw std::logic_error("Should continue through the midpoint and around the block");
 
-  mid_through_distance = directions.front().summary().length();
+  mid_through_distance = directions.begin()->summary().length();
 }
 
 void test_mid_via(const std::string& date_time) {
   route_tester tester;
-  std::list<TripPath> legs;
-  std::list<TripDirections> directions;
   std::string request =
       R"({"locations":[{"lat":52.09015,"lon":5.06362},{"lat":52.09041,"lon":5.06337,"type":"via"},{"lat":52.09015,"lon":5.06362}],"costing":"auto"})";
 
   request.pop_back();
   request += date_time;
-  std::tie(legs, directions) = tester.test(request);
+  auto response = tester.test(request);
+  const auto& legs = response.trip().routes(0).legs();
+  const auto& directions = response.directions().routes(0).legs();
 
   if (legs.size() != 1 || directions.size() != 1)
     throw std::logic_error("Should have 1 leg with 1 set of directions");
@@ -183,15 +185,15 @@ void test_mid_via(const std::string& date_time) {
       if (!name.empty())
         name.pop_back();
       names.push_back(name);
-      uturns += m.type() == TripDirections_Maneuver_Type_kUturnRight ||
-                m.type() == TripDirections_Maneuver_Type_kUturnLeft;
+      uturns += m.type() == DirectionsLeg_Maneuver_Type_kUturnRight ||
+                m.type() == DirectionsLeg_Maneuver_Type_kUturnLeft;
     }
   }
 
   if (uturns != 1)
     throw std::logic_error("Should be exactly 1 u-turn but there are: " + std::to_string(uturns));
 
-  float mid_via_distance = directions.front().summary().length();
+  float mid_via_distance = directions.begin()->summary().length();
   if (!equal(mid_via_distance, mid_break_distance, 0.001f))
     throw std::logic_error(
         "The only difference in path between mid break and mid via is arrive/depart guidance");
@@ -203,14 +205,14 @@ void test_mid_via(const std::string& date_time) {
 
 void test_mid_break_through(const std::string& date_time) {
   route_tester tester;
-  std::list<TripPath> legs;
-  std::list<TripDirections> directions;
   std::string request =
       R"({"locations":[{"lat":52.09015,"lon":5.06362},{"lat":52.09041,"lon":5.06337,"type":"break_through"},{"lat":52.09015,"lon":5.06362,"heading":0}],"costing":"auto"})";
 
   request.pop_back();
   request += date_time;
-  std::tie(legs, directions) = tester.test(request);
+  auto response = tester.test(request);
+  const auto& legs = response.trip().routes(0).legs();
+  const auto& directions = response.directions().routes(0).legs();
 
   if (legs.size() != 2 || directions.size() != 2)
     throw std::logic_error("Should have two legs with two sets of directions");
@@ -224,14 +226,14 @@ void test_mid_break_through(const std::string& date_time) {
       if (!name.empty())
         name.pop_back();
       names.push_back(name);
-      if (m.type() == TripDirections_Maneuver_Type_kUturnRight ||
-          m.type() == TripDirections_Maneuver_Type_kUturnLeft)
+      if (m.type() == DirectionsLeg_Maneuver_Type_kUturnRight ||
+          m.type() == DirectionsLeg_Maneuver_Type_kUturnLeft)
         throw std::logic_error("Should not encounter any u-turns");
     }
   }
 
   float mid_break_through_distance =
-      directions.front().summary().length() + directions.back().summary().length();
+      directions.begin()->summary().length() + directions.rbegin()->summary().length();
   if (!equal(mid_break_through_distance, mid_through_distance, 0.001f))
     throw std::logic_error(
         "The only difference in path between mid through and mid break through is arrive/depart guidance");
